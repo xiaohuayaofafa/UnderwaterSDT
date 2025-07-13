@@ -1,0 +1,55 @@
+# ===== 核心排除项 =====
+# 数据集目录（不上传原始数据）
+data/
+# 训练权重文件
+weights/
+*.pth
+*.pt
+*.ckpt
+# 日志文件
+logs/
+*.log
+*.txt
+
+# ===== Python 开发通用排除 =====
+# 字节码文件
+__pycache__/
+*.py[cod]
+# Jupyter 相关
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== 临时文件 =====
+# 系统临时文件
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ===== 配置文件排除 =====
+# 包含敏感信息的配置文件
+configs/local_*.py
+configs/secret_*.yaml
+*.secret
+
+# ===== 数据集缓存 =====
+# 预处理数据缓存
+.cache/
+.preprocessed/
+
+# ===== 训练输出 =====
+# 训练生成的中间文件
+work_dirs/
+output_pkl/
+show_dir/
+saveckt/
+auto_results/
+
+# ===== 大文件排除 =====
+# 超过100MB的文件（GitHub限制）
+*.[0-9][0-9][0-9]m
+*.zip
+*.tar
+*.gz
