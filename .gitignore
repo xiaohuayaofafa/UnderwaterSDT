@@ -3,7 +3,7 @@
 data/
 # 训练权重文件
 weights/
-*.pth
+# *.pth
 *.pt
 *.ckpt
 # 日志文件
