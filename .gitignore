@@ -44,7 +44,7 @@ configs/secret_*.yaml
 work_dirs/
 output_pkl/
 show_dir/
-saveckt/
+# saveckt/
 auto_results/
 
 # ===== 大文件排除 =====
