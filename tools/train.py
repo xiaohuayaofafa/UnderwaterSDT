@@ -13,16 +13,7 @@ from mmengine.config import Config, DictAction
 from mmengine.logging import print_log
 from mmengine.registry import RUNNERS
 from mmengine.runner import Runner
-
 from mmdet.utils import setup_cache_size_limit_of_dynamo
-# from mmdet.utils import register_all_modules  #我加进去的
-
-# # # 显式导入SDEFormer以确保注册
-# # from mmdet.models.backbones.sdeformer import SDEFormer  # 关键导入
-# from .sdeformer import SDEFormer
-
-# # 注册所有模块，包括自定义模块
-# register_all_modules()
 
 
 

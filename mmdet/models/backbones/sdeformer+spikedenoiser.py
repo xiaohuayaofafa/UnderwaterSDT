@@ -249,8 +249,8 @@ class MS_ConvBlock_spike_SepConv(nn.Module):
         x_feat = x
         x = self.spike1(x)
         # 在spike激活后添加去噪，且仅在测试阶段
-        # if not self.training:
-        #     x = detect_noise_points(x)
+        if not self.training:
+            x = detect_noise_points(x)
         x = self.bn1(self.conv1(x)).reshape(B, self.mlp_ratio * C, H, W)
         x = self.spike2(x)
         x = self.bn2(self.conv2(x)).reshape(B, C, H, W)

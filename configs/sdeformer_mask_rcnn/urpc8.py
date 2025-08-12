@@ -1,3 +1,6 @@
+#从 _base_ 目录下引用了四个基础配置文件，分别是 Mask R-CNN 模型的基础配置、
+#COCO 数据集实例分割任务的配置、训练调度的配置以及默认运行时的配置。
+#这些基础配置提供了一些通用的设置，本配置文件可以在此基础上进行修改和扩展。
 _base_ = [
     '../_base_/models/mask-rcnn_r50_fpn.py',
     '../_base_/datasets/urpc_instance.py',#修改为我的 urpc 配置文件，同时修改下面的 roi_head 里的类别数量为 4
@@ -5,22 +8,25 @@ _base_ = [
      '../_base_/default_runtime.py'
 ]
 
+#预训练权重
 pretrained = "V3_19.0M_1x4.pth"
-#先注释掉，不使用预训练的权重 
 
 # augmentation strategy originates from DETR / Sparse RCNN
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
-    # 我把 mask 改为 false
-    dict(type='LoadAnnotations', with_bbox=True, with_mask=False), 
+    dict(type='LoadAnnotations', with_bbox=True, with_mask=False), # 我把 mask 改为 false
     dict(type='Resize', scale=(640,480), keep_ratio=True),#我改成 640x480 原来是 853,512
     dict(type='RandomFlip', prob=0.5),
-
-    # 我新增了三行为了 urpc 而做处理的数据 在MMDetection中，所有数据增强操作都需要先注册到TRANSFORMS注册表中
-    # dict(type='ColorJitter', brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),  # 颜色抖动
-    # dict(type='RandomBlur', prob=0.3, radius=3),  # 随机模糊，模拟水下悬浮颗粒
-    # dict(type='RandomGamma', gamma_range=(0.7, 1.5)),  # 调整亮度和对比度
-
+  # MSR
+    dict(
+        type='MultiRetinex',
+        model='MSR',  # 使用 MSR 模型
+        sigma=[30, 150, 300],  # 高斯核的方差
+        restore_factor=2.0,  # 控制颜色修复的非线性
+        color_gain=10.0,  # 控制颜色修复增益
+        gain=128.0,  # 图像像素值改变范围的增益
+        offset=128.0  # 图像像素值改变范围的偏移量
+    ),
     dict(
         type='RandomChoice',
         #随机选择数据增强操作，定义了两种
@@ -32,28 +38,25 @@ train_pipeline = [
                 # 为了适应数据集尺寸做的修改，避免太大
                 scales=[(480, 640), (512, 640), (544, 640), (576, 640), (608, 640)],
                 keep_ratio=True)
-        ],
+            ],
         # 如果选择了第二个列表，那么会依次对图像进行 RandomChoiceResize、RandomCrop 和 RandomChoiceResize 操作
-                    [
-                        dict(
-                            type='RandomChoiceResize',
-                            # 为了适应数据集做的修改
-                            scales=[(400, 640), (480, 640), (560, 640)],
-                            keep_ratio=True),
-                        dict(
-                            # type='RandomCrop',
-                            # crop_type='absolute_range', 
-                            # crop_size=(384, 288),
-                            # allow_negative_crop=True
-                            type='RandomCrop',
-                            crop_type='relative_range',  # 相对比例 原来的代码裁剪完完全没有目标了所以进行修改
-                            crop_size=(0.7, 0.7),  # 裁剪70%区域
-                            allow_negative_crop=False),
-                        dict(
-                            type='RandomChoiceResize',
-                            scales=[(480, 640), (512, 640), (544, 640), (576, 640), (608, 640)], # 调整为适合640×480的范围
-                            keep_ratio=True)
-                    ]]),
+            [
+            dict(
+                type='RandomChoiceResize',
+                # 为了适应数据集做的修改
+                scales=[(400, 640), (480, 640), (560, 640)],
+                keep_ratio=True),
+            dict(
+                type='RandomCrop',
+                crop_type='relative_range',  # 相对比例 原来的代码裁剪完完全没有目标了所以进行修改
+                crop_size=(0.7, 0.7),  # 裁剪70%区域
+                allow_negative_crop=False),
+            dict(
+                type='RandomChoiceResize',
+                scales=[(480, 640), (512, 640), (544, 640), (576, 640), (608, 640)], # 调整为适合640×480的范围
+            keep_ratio=True)
+            ]]),
+  
     dict(type='PackDetInputs')
 ]
 train_dataloader = dict(
@@ -63,6 +66,7 @@ train_dataloader = dict(
     dataset=dict(pipeline=train_pipeline))
 
 model = dict(
+    #定义在mmdet/model/detectors
     type='MaskRCNN',
     backbone=dict(
         _delete_=True,
@@ -74,12 +78,14 @@ model = dict(
         qkv_bias=False,
         depths=8,
         sr_ratios=1,
-        init_cfg=dict(type='Pretrained', checkpoint=pretrained)#先注释掉不知道是不是跟预训练权重相关的
+        init_cfg=dict(type='Pretrained', checkpoint=pretrained)
     ),
     neck=dict(
         type='SpikeFPN',
         in_channels=[64, 128, 256, 360],
         out_channels=256,
+        #从 backbone 输出的特征图只有 4 张，但 SpikeFPN 通过最大池化操作在最后一个输出特征图上生成了额外的特征图，
+        #从而使得最终输出的特征图数量达到 5 张，这些特征图会被输入到 RPN 中进行后续的目标检测任务。
         num_outs=5),
     rpn_head=dict(
         type='SpikeRPNHead',
@@ -134,7 +140,6 @@ max_epochs = 30
 max_iter = max_epochs * 23454
 train_cfg = dict(max_epochs=max_epochs)
 
-
 #  
 param_scheduler = [
     dict(
@@ -142,31 +147,31 @@ param_scheduler = [
         start_factor=0.01,
         by_epoch=False,
         begin=0,
-        end=150  # ≈0.64个epoch (150次迭代)
+        end=300  # ≈0.64个epoch (150次迭代)
     ),
     dict(
         type='CosineAnnealingLR',
-        T_max=29.36,  # 30 - 0.64 = 29.36个epoch
+        T_max=13830,  # 30 - 0.64 = 29.36个epoch
         eta_min=5e-7,  # 保持您设定的最小值
-        by_epoch=True,
-        begin=1,
-        end=30
+        by_epoch=False,
+        begin=300,
+        end=14130
     )
 ]
 optim_wrapper = dict(
     type='OptimWrapper',
     # 梯度裁剪调整（相对宽松）
-    clip_grad=dict(max_norm=4.0, norm_type=2),  # 原为3.0
+    clip_grad=dict(max_norm=6.0, norm_type=2),  # 原为3.0
     paramwise_cfg=dict(
         custom_keys={
             'norm': dict(decay_mult=0.),
-            'backbone': dict(lr_mult=0.5)  # 骨干网络学习率折扣
+            'backbone': dict(lr_mult=0.6)  # 骨干网络学习率折扣
         }
     ),
-    optimizer=dict(  # 完全保留您精心调整的参数！
+    optimizer=dict( 
         _delete_=True,
         type='AdamW',
-        lr=0.0009,
+        lr=0.0045,
         eps=1e-8,
         betas=(0.9, 0.99),
         weight_decay=0.008

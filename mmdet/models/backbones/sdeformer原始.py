@@ -6,119 +6,8 @@ from mmengine.runner.checkpoint import CheckpointLoader
 import torch
 import torchinfo
 import torch.nn as nn
-import torch.nn.functional as F
 from timm.models.layers import trunc_normal_, DropPath
 from functools import partial
-
-def find_points(tensor, type):
-    """
-    使用不同类型的卷积核检测噪声点
-    Args:
-        tensor: 输入的脉冲二值图像张量
-        type: 使用的卷积核类型（0-4）
-    """
-    # 根据不同类型选择卷积核
-    if type == 1 or type == 0:
-        kernel = torch.tensor([[-1, -1, -1],
-                             [-1,  8, -1],
-                             [-1, -1, -1]], dtype=tensor.dtype)
-    elif type == 2:
-        kernel = torch.tensor([[2, 0, 2],
-                             [0, -8, 0],
-                             [2, 0, 2]], dtype=tensor.dtype)
-    elif type == 3:
-        kernel = torch.tensor([[0, 2, 0],
-                             [2, -8, 2],
-                             [0, 2, 0]], dtype=tensor.dtype)
-    elif type == 4:
-        kernel = torch.tensor([[-1,-1,-1,-1,-1],
-                             [-1, 1, 1, 1,-1],
-                             [-1, 1, 1, 1,-1],
-                             [-1, 1, 1, 1,-1],
-                             [-1,-1,-1,-1,-1]], dtype=tensor.dtype)
-
-    # 扩展卷积核维度
-    channels = tensor.size(1)
-    kernel = kernel.unsqueeze(0).unsqueeze(0)
-    if type == 4:
-        kernel = kernel.expand(channels, 1, 5, 5)
-        padding = 2
-    else:
-        kernel = kernel.expand(channels, 1, 3, 3)
-        padding = 1
-    kernel = kernel.to(tensor.device)
-
-    # 执行卷积操作
-    conv_result = F.conv2d(tensor, kernel, padding=padding, groups=channels).detach()
-
-    # 根据不同类型处理结果
-    if type == 1:
-        return tensor - (conv_result >= 8).int().detach()
-    elif type == 0:
-        return tensor + (conv_result <= -6).int().detach()
-    elif type == 4:
-        return tensor + (conv_result <= -12).int().detach()
-    elif type in [2, 3]:
-        return tensor - (conv_result <= -8).int().detach()
-    
-    return tensor
-
-def detect_noise_points(x):
-    """
-    多阶段去噪处理
-    Args:
-        x: 输入的脉冲二值图像，支持3D或4D张量
-    """
-    # 确保输入是4D张量 [B, C, H, W]
-    orig_shape = x.shape
-    print(f"detect_noise_points input shape: {x.shape}, dtype: {x.dtype}, device: {x.device}")
-    print(f"输入数据统计: 最大值={x.max().item():.4f}, 最小值={x.min().item():.4f}, 平均值={x.mean().item():.4f}, 非零元素比例={torch.count_nonzero(x).item() / x.numel():.4f}")
-    
-    # 在任何处理之前保存输入的副本
-    input_tensor = x.clone()
-    
-    if x.dim() == 3:
-        x = x.unsqueeze(0)
-        input_tensor = input_tensor.unsqueeze(0)
-    elif x.dim() == 2:
-        x = x.unsqueeze(0).unsqueeze(0)
-        input_tensor = input_tensor.unsqueeze(0).unsqueeze(0)
-
-    # 应用多阶段去噪处理
-    # 1. 先将图像取反
-    x = 1 - x
-    
-    # 2. 应用type 3的降噪
-    x = find_points(x, 3)
-    
-    # 3. 应用type 2的降噪
-    x = find_points(x, 2)
-    
-    # 4. 再次取反
-    x = 1 - x
-    
-    # 5. 最后应用type 1的降噪
-    x = find_points(x, 1)
-    
-    # 记录结果并恢复原始维度
-    if len(orig_shape) == 3:
-        x = x.squeeze(0)
-        input_tensor = input_tensor.squeeze(0)
-    elif len(orig_shape) == 2:
-        x = x.squeeze(0).squeeze(0)
-        input_tensor = input_tensor.squeeze(0).squeeze(0)
-    
-    result = x
-    
-    # 打印去噪后的统计信息
-    print(f"去噪后数据统计: 最大值={result.max().item():.4f}, 最小值={result.min().item():.4f}, 平均值={result.mean().item():.4f}, 非零元素比例={torch.count_nonzero(result).item() / result.numel():.4f}")
-    
-    # 计算修改的像素点数量
-    changed_pixels = torch.count_nonzero(input_tensor != result).item()
-    total_pixels = result.numel()
-    print(f"去噪修改了 {changed_pixels} 个像素点，占总像素点的 {changed_pixels/total_pixels*100:.2f}%")
-        
-    return result
 
   
 class Quant(torch.autograd.Function):
@@ -145,20 +34,15 @@ class MultiSpike_norm4(nn.Module):
         self,
         Vth=1.0,
         T=4.0,  # 在T上进行Norm
-        enable_denoise=True  # 是否启用去噪
     ):
         super().__init__()
         self.spike = Quant()
         self.Vth = Vth
         self.T = T
-        self.enable_denoise = enable_denoise
 
     def forward(self, x):
         if self.training:
-            # 脉冲激活
-            spike_out = self.spike.apply(x) / self.T
-            
-            return spike_out
+            return self.spike.apply(x) / self.T
         else:
             return torch.clamp(x, min=0, max=self.T).round_() / self.T
 
@@ -248,9 +132,6 @@ class MS_ConvBlock_spike_SepConv(nn.Module):
         x = self.Conv(x) + x
         x_feat = x
         x = self.spike1(x)
-        # 在spike激活后添加去噪，且仅在测试阶段
-        # if not self.training:
-        #     x = detect_noise_points(x)
         x = self.bn1(self.conv1(x)).reshape(B, self.mlp_ratio * C, H, W)
         x = self.spike2(x)
         x = self.bn2(self.conv2(x)).reshape(B, C, H, W)
@@ -479,10 +360,6 @@ class MS_DownSampling(nn.Module):
 
 @MODELS.register_module()
 class SDEFormer(BaseModule):
-    # 添加类变量来追踪批次
-    _batch_counter = 0
-    _total_images = 0
-    
     def __init__(
         self,
         img_size_h=128,
@@ -674,11 +551,10 @@ class SDEFormer(BaseModule):
 
     def forward_features(self, x, hook=None):
         outs = []
-        
-        # 第一阶段
+
         x = self.downsample1_1(x)
         for blk in self.ConvBlock1_1:
-            x = blk(x)  # 去噪操作已移至MS_ConvBlock_spike_SepConv类中
+            x = blk(x)
         x = self.downsample1_2(x)
         for blk in self.ConvBlock1_2:
             x = blk(x)
@@ -710,24 +586,5 @@ class SDEFormer(BaseModule):
     from mmdet.utils import AvoidCUDAOOM
     @AvoidCUDAOOM.retry_if_cuda_oom
     def forward(self, x):
-        import time
-        start_time = time.time()
-        
-        # 更新批次计数器
-        SDEFormer._batch_counter += 1
-        batch_size = x.shape[0]
-        SDEFormer._total_images += batch_size
-        
         x = self.forward_features(x)
-        torch.cuda.synchronize()  # 确保GPU操作完成
-        end_time = time.time()
-        
-        # # 打印进度信息
-        # print(f"\n{'='*50}")
-        # print(f"Batch #{SDEFormer._batch_counter} (处理 {batch_size} 张图像)")
-        # print(f"累计处理图像数: {SDEFormer._total_images}")
-        # print(f"本批次耗时: {end_time - start_time:.3f}s")
-        # print(f"GPU内存占用: {torch.cuda.max_memory_allocated()/1024**3:.2f}GB")
-        # print(f"{'='*50}\n")
-        
         return x

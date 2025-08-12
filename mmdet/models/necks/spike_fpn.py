@@ -259,7 +259,9 @@ class SpikeFPN(BaseModule):
         outs = [
             self.fpn_convs[i](laterals[i]) for i in range(used_backbone_levels)
         ]
-        # part 2: add extra levels
+        # part 2: add extra levels在配置文件中，add_extra_convs 没有明确指定，因此默认值为 False。
+        #在这种情况下，当 num_outs 大于输入特征图的数量时，会使用最大池化（max pool）操作来生成额外的特征图。具体步骤如下：
+
         if self.num_outs > len(outs):
             # use max pool to get more levels on top of outputs
             # (e.g., Faster R-CNN, Mask R-CNN)
