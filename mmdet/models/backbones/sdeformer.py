@@ -15,7 +15,7 @@ def find_points(tensor, type):
     使用不同类型的卷积核检测噪声点
     Args:
         tensor: 输入的脉冲二值图像张量
-        type: 使用的卷积核类型（0-4）
+        type: 使用的卷积核类型（0-6）
     """
     # 根据不同类型选择卷积核
     if type == 1 or type == 0:
@@ -36,6 +36,11 @@ def find_points(tensor, type):
                              [-1, 1, 1, 1,-1],
                              [-1, 1, 1, 1,-1],
                              [-1,-1,-1,-1,-1]], dtype=tensor.dtype)
+    elif type == 6:  # Sobel风格的边缘感知卷积核
+        # 使用Sobel X方向的卷积核
+        kernel = torch.tensor([[-1, 0, 1],
+                             [-2, 0, 2],
+                             [-1, 0, 1]], dtype=tensor.dtype)
 
     # 扩展卷积核维度
     channels = tensor.size(1)
@@ -60,6 +65,9 @@ def find_points(tensor, type):
         return tensor + (conv_result <= -12).int().detach()
     elif type in [2, 3]:
         return tensor - (conv_result <= -8).int().detach()
+    elif type == 6:  # 边缘感知卷积核处理
+        # 使用阈值3来检测边缘噪声（原阈值6可能过于严格）
+        return tensor - (torch.abs(conv_result) >= 5).int().detach()
     
     return tensor
 
@@ -86,18 +94,18 @@ def detect_noise_points(x):
 
     # 应用多阶段去噪处理
     # 1. 先将图像取反
-    x = 1 - x
-    
-    # 2. 应用type 3的降噪
+    x = 1 - x  
+    # 2. 应用type 4的降噪（处理大面积噪声）
+    # x = find_points(x, 4)
+    # 3. 应用type 6的边缘感知降噪
+    x = find_points(x, 6)
+    # 4. 应用type 3的降噪
     x = find_points(x, 3)
-    
-    # 3. 应用type 2的降噪
+    # 5. 应用type 2的降噪
     x = find_points(x, 2)
-    
-    # 4. 再次取反
+    # 6. 再次取反
     x = 1 - x
-    
-    # 5. 最后应用type 1的降噪
+    # 7. 最后应用type 1的降噪
     x = find_points(x, 1)
     
     # 记录结果并恢复原始维度
@@ -205,6 +213,9 @@ class SepConv_Spike(nn.Module):
 
     def forward(self, x):
         x = self.spike1(x)
+        # 在第一次脉冲激活后添加去噪，且仅在测试阶段
+        # if not self.training:
+        #     x = detect_noise_points(x)
 
         x = self.pwconv1(x)
 
@@ -249,8 +260,8 @@ class MS_ConvBlock_spike_SepConv(nn.Module):
         x_feat = x
         x = self.spike1(x)
         # 在spike激活后添加去噪，且仅在测试阶段
-        # if not self.training:
-        #     x = detect_noise_points(x)
+        if not self.training:
+            x = detect_noise_points(x)
         x = self.bn1(self.conv1(x)).reshape(B, self.mlp_ratio * C, H, W)
         x = self.spike2(x)
         x = self.bn2(self.conv2(x)).reshape(B, C, H, W)
@@ -675,10 +686,9 @@ class SDEFormer(BaseModule):
     def forward_features(self, x, hook=None):
         outs = []
         
-        # 第一阶段
         x = self.downsample1_1(x)
         for blk in self.ConvBlock1_1:
-            x = blk(x)  # 去噪操作已移至MS_ConvBlock_spike_SepConv类中
+            x = blk(x)  
         x = self.downsample1_2(x)
         for blk in self.ConvBlock1_2:
             x = blk(x)

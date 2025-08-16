@@ -3,7 +3,7 @@
 data/
 # 训练权重文件
 weights/
-# *.pth
+*.pth
 *.pt
 *.ckpt
 # 日志文件
@@ -44,7 +44,7 @@ configs/secret_*.yaml
 work_dirs/
 output_pkl/
 show_dir/
-# saveckt/
+saveckt/
 auto_results/
 
 # ===== 大文件排除 =====
